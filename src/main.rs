@@ -186,7 +186,7 @@ fn write_char(output: &mut String, c: char, in_str: bool) {
         return;
     }
     output.write_char(c).unwrap();
-    if c == ':' {
+    if !in_str && c == ':' {
         output.write_char(' ').unwrap();
     }
 }
