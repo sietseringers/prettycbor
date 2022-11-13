@@ -63,8 +63,18 @@ fn main() -> Result<()> {
         try_hex_cbor2diag(input_raw, cli_input.embedded)?
     };
 
+    let printer = PrettyPrinter {
+        // Specify a capacity to try to avoid reallocation. The factor 2 is a little arbitrary
+        // but should suffice in most cases.
+        output: String::with_capacity(input.len() * 2),
+
+        in_str: false,
+        indent_count: 0,
+        space_count: cli_input.indent,
+    };
+
     // Do our thing
-    println!("{}", pretty_print(input.as_slice(), cli_input.indent));
+    println!("{}", printer.pretty_print(input.as_slice()));
     Ok(())
 }
 
@@ -108,68 +118,71 @@ fn cbor2diag(input: Vec<u8>, embedded: bool) -> Result<Vec<u8>> {
     }
 }
 
-fn pretty_print(input: &[u8], space_count: usize) -> String {
-    // Specify a capacity to try to avoid reallocation. The factor 2 is a little arbitrary
-    // but should suffice in most cases.
-    let mut output = String::with_capacity(input.len() * 2);
+struct PrettyPrinter {
+    output: String,
+    in_str: bool,
+    indent_count: usize,
+    space_count: usize,
+}
 
-    let mut in_str = false;
-    let mut indent_count = 0;
+impl PrettyPrinter {
+    fn pretty_print(mut self, input: &[u8]) -> String {
+        for idx in 0..input.len() {
+            let c = input[idx] as char;
+            let prev = idx.checked_sub(1).map(|i| input[i] as char);
+            let next = input.get(idx + 1).map(|b| *b as char);
 
-    for idx in 0..input.len() {
-        let c = input[idx] as char;
-        let prev = idx.checked_sub(1).map(|i| input[i] as char);
-        let next = input.get(idx + 1).map(|b| *b as char);
+            if c == '\"' && prev.map_or(true, |ch| ch != '\\') {
+                self.in_str = !self.in_str;
+            }
 
-        if c == '\"' && prev.map_or(true, |ch| ch != '\\') {
-            in_str = !in_str;
+            if self.in_str {
+                // If we're in a string, always just print it
+                self.write_char(c);
+            } else {
+                self.process_char(c, prev, next);
+            }
         }
 
-        if in_str {
-            // If we're in a string, always just print it
-            write_char(&mut output, c, in_str);
+        self.output
+    }
+
+    fn process_char(&mut self, c: char, prev: Option<char>, next: Option<char>) {
+        if is_open(c) {
+            self.write_char(c);
+            self.indent_count += 1;
+            if next.map_or(false, |ch| !is_close(ch)) {
+                self.write_newline();
+            }
+        } else if is_close(c) {
+            self.indent_count -= 1;
+            if prev.map_or(false, |ch| !is_open(ch)) {
+                self.write_newline();
+            }
+            self.write_char(c);
+        } else if c == ',' {
+            self.write_char(c);
+            self.write_newline();
         } else {
-            process_char(
-                c,
-                &mut output,
-                &mut indent_count,
-                space_count,
-                prev,
-                next,
-                in_str,
-            );
+            self.write_char(c);
         }
     }
 
-    output
-}
+    fn write_char(&mut self, c: char) {
+        if !self.in_str && c == ' ' {
+            return;
+        }
+        self.output.write_char(c).unwrap();
+        if !self.in_str && c == ':' {
+            self.output.write_char(' ').unwrap();
+        }
+    }
 
-fn process_char(
-    c: char,
-    output: &mut String,
-    indent_count: &mut usize,
-    space_count: usize,
-    prev: Option<char>,
-    next: Option<char>,
-    in_str: bool,
-) {
-    if is_open(c) {
-        write_char(output, c, in_str);
-        *indent_count += 1;
-        if next.map_or(false, |ch| !is_close(ch)) {
-            newline(output, *indent_count, space_count);
-        }
-    } else if is_close(c) {
-        *indent_count -= 1;
-        if prev.map_or(false, |ch| !is_open(ch)) {
-            newline(output, *indent_count, space_count);
-        }
-        write_char(output, c, in_str);
-    } else if c == ',' {
-        write_char(output, c, in_str);
-        newline(output, *indent_count, space_count);
-    } else {
-        write_char(output, c, in_str);
+    fn write_newline(&mut self) {
+        self.output.write_char('\n').unwrap();
+        self.output
+            .write_str(&(" ".repeat(self.indent_count * self.space_count)))
+            .unwrap();
     }
 }
 
@@ -179,21 +192,4 @@ fn is_open(c: char) -> bool {
 
 fn is_close(c: char) -> bool {
     c == '}' || c == ']'
-}
-
-fn write_char(output: &mut String, c: char, in_str: bool) {
-    if !in_str && c == ' ' {
-        return;
-    }
-    output.write_char(c).unwrap();
-    if !in_str && c == ':' {
-        output.write_char(' ').unwrap();
-    }
-}
-
-fn newline(output: &mut String, indent_count: usize, space_count: usize) {
-    output.write_char('\n').unwrap();
-    output
-        .write_str(&(" ".repeat(indent_count * space_count)))
-        .unwrap();
 }
