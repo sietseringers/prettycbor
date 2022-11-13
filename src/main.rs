@@ -127,9 +127,17 @@ fn pretty_print(input: &[u8], space_count: usize) -> String {
 
         if in_str {
             // If we're in a string, always just print it
-            write_char(&mut output, c);
+            write_char(&mut output, c, in_str);
         } else {
-            process_char(c, &mut output, &mut indent_count, space_count, prev, next);
+            process_char(
+                c,
+                &mut output,
+                &mut indent_count,
+                space_count,
+                prev,
+                next,
+                in_str,
+            );
         }
     }
 
@@ -143,9 +151,10 @@ fn process_char(
     space_count: usize,
     prev: Option<char>,
     next: Option<char>,
+    in_str: bool,
 ) {
     if is_open(c) {
-        write_char(output, c);
+        write_char(output, c, in_str);
         *indent_count += 1;
         if next.map_or(false, |ch| !is_close(ch)) {
             newline(output, *indent_count, space_count);
@@ -155,12 +164,12 @@ fn process_char(
         if prev.map_or(false, |ch| !is_open(ch)) {
             newline(output, *indent_count, space_count);
         }
-        write_char(output, c);
+        write_char(output, c, in_str);
     } else if c == ',' {
-        write_char(output, c);
+        write_char(output, c, in_str);
         newline(output, *indent_count, space_count);
     } else {
-        write_char(output, c);
+        write_char(output, c, in_str);
     }
 }
 
@@ -172,8 +181,8 @@ fn is_close(c: char) -> bool {
     c == '}' || c == ']'
 }
 
-fn write_char(output: &mut String, c: char) {
-    if c == ' ' {
+fn write_char(output: &mut String, c: char, in_str: bool) {
+    if !in_str && c == ' ' {
         return;
     }
     output.write_char(c).unwrap();
