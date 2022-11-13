@@ -2,10 +2,12 @@
 name = "whitespace"
 version = "0.1.0"
 edition = "2021"
+description = "Pretty-print (diagnostic) CBOR, optionally using cbor2diag.rb"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
 anyhow = "1.0.66"
+clap = { version = "4.0.23", features = ["derive"] }
 hex = "0.4.3"
 which = "4.3.0"

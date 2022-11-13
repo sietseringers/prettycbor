@@ -1,47 +1,91 @@
 use anyhow::{anyhow, bail, Context, Result};
+use clap::{ArgGroup, Parser};
 use std::fmt::Write;
+use std::io;
 use std::io::{Read, Write as IoWrite};
 use std::process::{Command, Stdio};
-use std::{env, io};
 
-/// One indentation level is this much spaces.
+/// One indentation level is by default this much spaces.
 const SPACE_COUNT: usize = 2;
 
-fn main() -> Result<()> {
-    let args: Vec<String> = env::args().collect();
-    if args.len() > 2 {
-        bail!("{} arguments received, 0 or 1 expected", args.len() - 1);
-    }
+#[derive(Parser)]
+#[command(author, version, about, long_about = None)]
+#[clap(group(ArgGroup::new("mode").args(&["hex", "diag"])))]
+struct CliInput {
+    /// Let cbor2diag.rb parse embedded CBOR using its -e flag
+    #[arg(short, long)]
+    embedded: bool,
 
-    let mut stdin_buf = String::new();
-    let input_raw = if args.len() == 2 {
-        args[1].clone()
-    } else {
-        io::stdin().read_to_string(&mut stdin_buf)?;
-        stdin_buf
+    /// Amount of spaces used for indentation
+    #[arg(short, long, default_value_t = SPACE_COUNT)]
+    indent: usize,
+
+    /// Force parsing input as hexadecimal which is passed through cbor2diag.rb
+    #[arg(short = 'x', long)]
+    hex: bool,
+
+    /// Force acting directly on the input
+    #[arg(short, long)]
+    diag: bool,
+
+    /// Data to act on, either hexadecimal or diagnostic. If absent, stdin is read.{n}
+    /// If neither --hex or --diag is given, the input is parsed as hexadecimal.{n}
+    /// If that works, the result is passed through cbor2diag.rb and then acted upon.{n}
+    /// If not, the input is acting upon directly.
+    data: Option<String>,
+}
+
+fn main() -> Result<()> {
+    let cli_input = CliInput::parse();
+
+    let input_raw = match cli_input.data {
+        Some(inp) => inp,
+        None => {
+            let mut stdin_buf = String::new();
+            io::stdin().read_to_string(&mut stdin_buf)?;
+            stdin_buf.into()
+        }
     };
 
     if input_raw.len() == 0 {
         bail!("no input received, pass input either via stdin or command-line argument");
     }
 
-    // If input is valid hexadecimal, run cbor2diag.rb on it an use that. Otherwise, just use the
-    // input directly.
-    let i = hex::decode(&input_raw);
-    let input = match i {
-        Ok(j) => cbor2diag(j)?,
-        Err(_) => input_raw.into_bytes(),
+    // Determine the input for the pretty printing as specified by the options
+    let input: Vec<u8> = if cli_input.hex {
+        cbor2diag(
+            hex::decode(&input_raw).context("hexadecimal decoding failed")?,
+            cli_input.embedded,
+        )?
+    } else if cli_input.diag {
+        input_raw.into_bytes()
+    } else {
+        try_hex_cbor2diag(input_raw, cli_input.embedded)?
     };
 
-    println!("{}", pretty_print(input.as_slice(), SPACE_COUNT));
+    // Do our thing
+    println!("{}", pretty_print(input.as_slice(), cli_input.indent));
     Ok(())
 }
 
-fn cbor2diag(input: Vec<u8>) -> Result<Vec<u8>> {
-    let cbor2diag = which::which("cbor2diag.rb").context("failed to locate cbor2diag.rb")?;
+fn try_hex_cbor2diag(input_raw: String, embedded: bool) -> Result<Vec<u8>> {
+    let input = match hex::decode(&input_raw) {
+        Ok(j) => cbor2diag(j, embedded)?,
+        Err(_) => input_raw.into_bytes(),
+    };
+    Ok(input)
+}
 
+const NO_CBOR2DIAG_ERR: &str = "failed to locate cbor2diag.rb.
+Ensure cbor2diag.rb is installed (using \"gem install cbor-diag\") and present in your $PATH,
+or input diagnostic CBOR instead (e.g. using https://https://cbor.me).";
+
+fn cbor2diag(input: Vec<u8>, embedded: bool) -> Result<Vec<u8>> {
+    let cbor2diag = which::which("cbor2diag.rb").context(NO_CBOR2DIAG_ERR)?;
+
+    let args: &[&str] = if embedded { &["-e"] } else { &[] };
     let mut process = Command::new(cbor2diag)
-        .arg("-e")
+        .args(args)
         .stdin(Stdio::piped()) // Pipe through.
         .stdout(Stdio::piped())
         .spawn()?;
@@ -58,22 +102,21 @@ fn cbor2diag(input: Vec<u8>) -> Result<Vec<u8>> {
 
     let output = process.wait_with_output()?;
     if !output.status.success() {
-        bail!(
-            "cbor2diag returned error: {}",
-            String::from_utf8(output.stderr).unwrap()
-        )
+        bail!("cbor2diag.rb failed")
     } else {
         Ok(output.stdout)
     }
 }
 
 fn pretty_print(input: &[u8], space_count: usize) -> String {
+    // Specify a capacity to try to avoid reallocation. The factor 2 is a little arbitrary
+    // but should suffice in most cases.
     let mut output = String::with_capacity(input.len() * 2);
+
     let mut in_str = false;
     let mut indent_count = 0;
-    let len = input.len();
 
-    for idx in 0..len {
+    for idx in 0..input.len() {
         let c = input[idx] as char;
         let prev = idx.checked_sub(1).map(|i| input[i] as char);
         let next = input.get(idx + 1).map(|b| *b as char);
