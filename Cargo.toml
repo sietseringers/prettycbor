@@ -1,5 +1,5 @@
 [package]
-name = "whitespace"
+name = "prettycbor"
 version = "0.1.0"
 edition = "2021"
 description = "Pretty-print (diagnostic) CBOR, optionally using cbor2diag.rb"
