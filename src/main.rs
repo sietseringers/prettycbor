@@ -43,7 +43,7 @@ fn main() -> Result<()> {
         None => {
             let mut stdin_buf = String::new();
             io::stdin().read_to_string(&mut stdin_buf)?;
-            stdin_buf.into()
+            stdin_buf
         }
     };
 
