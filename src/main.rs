@@ -53,10 +53,7 @@ fn main() -> Result<()> {
 
     // Determine the input for the pretty printing as specified by the options
     let input: Vec<u8> = if cli_input.hex {
-        cbor2diag(
-            hex::decode(&input_raw).context("hexadecimal decoding failed")?,
-            cli_input.embedded,
-        )?
+        cbor2diag(input_raw, cli_input.embedded)?
     } else if cli_input.diag {
         input_raw.into_bytes()
     } else {
@@ -78,19 +75,23 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-fn try_hex_cbor2diag(input_raw: String, embedded: bool) -> Result<Vec<u8>> {
-    let input = match hex::decode(&input_raw) {
-        Ok(j) => cbor2diag(j, embedded)?,
-        Err(_) => input_raw.into_bytes(),
-    };
-    Ok(input)
+fn try_hex_cbor2diag(input: String, embedded: bool) -> Result<Vec<u8>> {
+    if input.chars().all(|c| char_is_hex(&c) || c.is_whitespace()) {
+        cbor2diag(input, embedded)
+    } else {
+        Ok(input.into_bytes())
+    }
+}
+
+fn char_is_hex(c: &char) -> bool {
+    ('a'..='z').contains(c) || ('A'..='Z').contains(c) || ('0'..='9').contains(c)
 }
 
 const NO_CBOR2DIAG_ERR: &str = "failed to locate cbor2diag.rb.
 Ensure cbor2diag.rb is installed (using \"gem install cbor-diag\") and present in your $PATH,
 or input diagnostic CBOR instead (e.g. using https://https://cbor.me).";
 
-fn cbor2diag(input: Vec<u8>, embedded: bool) -> Result<Vec<u8>> {
+fn cbor2diag(hex: String, embedded: bool) -> Result<Vec<u8>> {
     let cbor2diag = which::which("cbor2diag.rb").context(NO_CBOR2DIAG_ERR)?;
 
     let args: &[&str] = if embedded { &["-e"] } else { &[] };
@@ -104,9 +105,12 @@ fn cbor2diag(input: Vec<u8>, embedded: bool) -> Result<Vec<u8>> {
         .stdin
         .take()
         .ok_or(anyhow!("failed to open stdin"))?;
+
+    let stripped: String = hex.chars().filter(|c| !c.is_whitespace()).collect();
+    let bts = hex::decode(stripped)?;
     std::thread::spawn(move || {
         stdin
-            .write_all(input.as_slice())
+            .write_all(bts.as_slice())
             .expect("failed to write to stdin");
     });
 
